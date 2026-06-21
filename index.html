@@ -40,11 +40,9 @@
 
   /* controls */
   .controls{display:grid;grid-template-columns:1.4fr 1fr auto;gap:14px;align-items:end;background:var(--paper);border:1px solid var(--rule);padding:22px;border-radius:4px;margin-bottom:14px;}
-  .key-row{background:var(--paper);border:1px solid var(--rule);padding:18px 22px;border-radius:4px;margin-bottom:36px;}
-  .key-row .key-field input{font-family:'JetBrains Mono',monospace;font-size:13px;}
-  .key-hint{font-family:'Inter',sans-serif;font-size:10px;color:var(--muted);text-transform:none;letter-spacing:0;font-weight:400;margin-left:8px;}
-  .key-hint a{color:var(--value);text-decoration:none;border-bottom:1px solid var(--rule);}
-  .key-hint a:hover{border-bottom-color:var(--value);}
+  .toggles{margin-bottom:36px;}
+  .toggle{display:flex;align-items:center;gap:8px;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--ink-soft);cursor:pointer;user-select:none;}
+  .toggle input{accent-color:var(--value);width:14px;height:14px;cursor:pointer;}
   .field label{display:block;font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:var(--muted);margin-bottom:8px;}
   .field input{width:100%;padding:11px 14px;background:var(--bg);border:1px solid var(--rule);border-radius:3px;font-family:'JetBrains Mono',monospace;font-size:15px;color:var(--ink);transition:border-color .15s;}
   .field input:focus{outline:none;border-color:var(--ink);}
@@ -82,9 +80,12 @@
   .stat .k{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:var(--muted);margin-bottom:10px;}
   .stat .v{font-family:'Instrument Serif',serif;font-size:30px;letter-spacing:-0.01em;line-height:1;}
   .stat .v.pos{color:var(--value);}
+  .stat:nth-child(5){grid-column:1/-1;border-right:none;border-top:1px solid var(--rule);}
+  .hidden{display:none !important;}
 
   /* note */
   .note{margin-top:30px;font-size:13px;color:var(--muted);font-style:italic;text-align:center;line-height:1.6;}
+  .caveat{margin-top:16px;font-size:13px;color:var(--value);font-weight:500;text-align:center;line-height:1.6;}
 
   /* responsive */
   @media(max-width:700px){
@@ -104,7 +105,7 @@
 
   <div class="top">
     <div class="brand">A Dollar a Day <em>— a backtest</em></div>
-    <div class="meta">v2</div>
+    <div class="meta">v2.1</div>
   </div>
 
   <div class="hero">
@@ -123,6 +124,10 @@
       <input id="yr" type="number" value="1985" min="1900" max="2026">
     </div>
     <button class="run" id="run">Run backtest</button>
+  </div>
+
+  <div class="toggles">
+    <label class="toggle"><input type="checkbox" id="showLump"> Show lump-sum CAGR for comparison</label>
   </div>
 
   <div class="status" id="status"></div>
@@ -150,7 +155,7 @@
       <div class="chart-wrap"><canvas id="chart"></canvas></div>
     </div>
 
-    <div class="stats">
+    <div class="stats" id="statsGrid">
       <div class="stat">
         <div class="k">Years held</div>
         <div class="v" id="sYears">—</div>
@@ -167,7 +172,15 @@
         <div class="k" title="Money-weighted return (XIRR) — accounts for when each dollar was actually invested, same method Fidelity/Vanguard use for 'Personal Rate of Return'">Annualized</div>
         <div class="v" id="sAnn">—</div>
       </div>
+      <div class="stat hidden" id="lumpStatTile">
+        <div class="k" title="The same total dollars invested all at once on day one and held — the stock's own buy-and-hold return, not the $1/day strategy">Lump-sum CAGR</div>
+        <div class="v" id="sLump">—</div>
+      </div>
     </div>
+
+    <p class="caveat hidden" id="shortCaveat">Heads up — under 2 years of history, annualized figures can look absurd. The math is correct; extrapolating a short, sharp run as a steady yearly rate usually isn't.</p>
+
+    <p class="note hidden" id="lumpCaption">Lump-sum CAGR is what the same total dollars would have returned invested all at once on day one instead of spread out $1/day — it's the stock's own buy-and-hold return, shown here for comparison against the strategy above.</p>
 
     <p class="note">Past performance doesn't predict the future. Survivorship bias is real — this only works on tickers that survived. The boring lesson is the gap between the two lines.</p>
   </div>
@@ -439,6 +452,14 @@ async function run() {
     const annRate = xirr(cashflows, cfDates);
     const ann = isFinite(annRate) ? annRate * 100 : NaN;
 
+    // Lump-sum CAGR: what the same total dollars would've returned invested
+    // all at once on day one instead of spread out $1/day. Pure price ratio,
+    // no solver needed — it's just the stock's own buy-and-hold return.
+    const lumpCAGR = (Math.pow(rows[rows.length - 1].adj / rows[0].adj, 1 / years) - 1) * 100;
+    $("sLump").textContent = lumpCAGR.toFixed(1) + "%";
+
+    $("shortCaveat").classList.toggle("hidden", years >= 2);
+
     $("legInv").textContent = fmtUSD(totalInvested);
     $("legVal").textContent = fmtUSD(finalValue);
     $("sYears").textContent = years.toFixed(1);
@@ -447,6 +468,7 @@ async function run() {
     $("sAnn").textContent = isFinite(ann) ? ann.toFixed(1) + "%" : "n/a";
 
     $("results").classList.add("shown");
+    history.replaceState(null, "", `?t=${encodeURIComponent(ticker)}&y=${startYear}`);
     setStatus(`${ticker} · ${first.date} → ${last.date} · ${rows.length.toLocaleString()} trading days simulated.${clipNote}`);
   } catch (e) {
     setStatus(`Error: ${e.message}`, true);
@@ -466,10 +488,30 @@ $("run").addEventListener("click", run);
 $("tk").addEventListener("keydown", e => { if (e.key === "Enter") run(); });
 $("yr").addEventListener("keydown", e => { if (e.key === "Enter") run(); });
 
-// Keep the year field's max realistic without needing a redeploy every January
+function updateLumpVisibility() {
+  const show = $("showLump").checked;
+  $("lumpStatTile").classList.toggle("hidden", !show);
+  $("lumpCaption").classList.toggle("hidden", !show);
+}
+$("showLump").addEventListener("change", updateLumpVisibility);
+
+// Keep the year field's max realistic without needing a redeploy every January,
+// and pick up ticker/year from a shared link if present.
 window.addEventListener("load", () => {
   $("yr").max = new Date().getFullYear();
-  setStatus("Type a ticker and a start year, then run the backtest.");
+  updateLumpVisibility();
+
+  const params = new URLSearchParams(location.search);
+  const t = params.get("t");
+  const y = params.get("y");
+  if (t) $("tk").value = t.toUpperCase();
+  if (y) $("yr").value = y;
+
+  if (t && y) {
+    run();
+  } else {
+    setStatus("Type a ticker and a start year, then run the backtest.");
+  }
 });
 </script>
 </body>
