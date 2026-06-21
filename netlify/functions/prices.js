@@ -25,7 +25,16 @@ exports.handler = async function (event) {
     return respond(400, { error: `"${symbol}" doesn't look like a valid ticker.` });
   }
 
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=max&interval=1d&events=div,splits`;
+  // IMPORTANT: don't use range=max here. Yahoo's chart endpoint silently
+  // coarsens interval=1d down to quarterly-ish buckets once the span gets
+  // long (confirmed empirically — MCD since 1985 came back as exactly 4
+  // points/year, every Jan/Apr/Jul/Oct 1st). The fix yfinance itself uses:
+  // pass explicit period1/period2 Unix timestamps instead of a range
+  // shortcut. period1 = Jan 1, 1900 (Yahoo just clips to whenever the
+  // ticker actually started trading); period2 = right now.
+  const period1 = -2208988800; // 1900-01-01
+  const period2 = Math.floor(Date.now() / 1000);
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?period1=${period1}&period2=${period2}&interval=1d&events=div,splits`;
 
   let res;
   try {
