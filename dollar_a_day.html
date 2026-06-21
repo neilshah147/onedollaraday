@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>A Dollar a Day</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=JetBrains+Mono:wght@400;500&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #FAF9F6;
+    --paper: #ffffff;
+    --ink: #1A1A1A;
+    --ink-soft: #4A4A4A;
+    --muted: #8B8B8B;
+    --rule: #E5E3DE;
+    --invested: #1A1A1A;
+    --value: #B85C38;
+    --accent: #1A1A1A;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  html,body{background:var(--bg);color:var(--ink);font-family:'Inter',sans-serif;font-weight:400;-webkit-font-smoothing:antialiased;}
+  body{min-height:100vh;padding:60px 32px 80px;}
+  .wrap{max-width:1080px;margin:0 auto;}
+
+  /* header */
+  .top{display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px solid var(--rule);padding-bottom:22px;margin-bottom:50px;}
+  .brand{font-family:'Instrument Serif',serif;font-size:24px;letter-spacing:-0.01em;}
+  .brand em{font-style:italic;color:var(--ink-soft);}
+  .meta{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.12em;}
+
+  /* hero */
+  .hero{margin-bottom:50px;}
+  .eyebrow{font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:var(--muted);margin-bottom:16px;}
+  h1{font-family:'Instrument Serif',serif;font-weight:400;font-size:clamp(40px,5.5vw,68px);line-height:1.02;letter-spacing:-0.015em;margin-bottom:18px;}
+  h1 em{font-style:italic;color:var(--value);}
+  .lede{font-size:16px;color:var(--ink-soft);max-width:58ch;line-height:1.6;}
+
+  /* controls */
+  .controls{display:grid;grid-template-columns:1.4fr 1fr auto;gap:14px;align-items:end;background:var(--paper);border:1px solid var(--rule);padding:22px;border-radius:4px;margin-bottom:14px;}
+  .key-row{background:var(--paper);border:1px solid var(--rule);padding:18px 22px;border-radius:4px;margin-bottom:36px;}
+  .key-row .key-field input{font-family:'JetBrains Mono',monospace;font-size:13px;}
+  .key-hint{font-family:'Inter',sans-serif;font-size:10px;color:var(--muted);text-transform:none;letter-spacing:0;font-weight:400;margin-left:8px;}
+  .key-hint a{color:var(--value);text-decoration:none;border-bottom:1px solid var(--rule);}
+  .key-hint a:hover{border-bottom-color:var(--value);}
+  .field label{display:block;font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:var(--muted);margin-bottom:8px;}
+  .field input{width:100%;padding:11px 14px;background:var(--bg);border:1px solid var(--rule);border-radius:3px;font-family:'JetBrains Mono',monospace;font-size:15px;color:var(--ink);transition:border-color .15s;}
+  .field input:focus{outline:none;border-color:var(--ink);}
+  .field input.ticker{font-family:'Instrument Serif',serif;font-size:22px;letter-spacing:0.04em;text-transform:uppercase;}
+  button.run{background:var(--ink);color:var(--bg);border:none;padding:13px 32px;font-family:'Inter',sans-serif;font-weight:500;font-size:13px;letter-spacing:0.04em;cursor:pointer;border-radius:3px;height:45px;transition:background .2s;}
+  button.run:hover{background:var(--value);}
+  button.run:disabled{background:var(--muted);cursor:wait;}
+
+  /* status */
+  .status{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--muted);margin-bottom:24px;min-height:18px;}
+  .status.err{color:var(--value);}
+  .status .blink{display:inline-block;width:8px;height:8px;background:var(--value);border-radius:50%;margin-right:8px;vertical-align:middle;animation:p 1.4s infinite;}
+  @keyframes p{0%,100%{opacity:.3;}50%{opacity:1;}}
+
+  /* results */
+  .results{display:none;}
+  .results.shown{display:block;}
+  .legend{display:flex;gap:36px;margin-bottom:24px;flex-wrap:wrap;}
+  .leg{display:flex;align-items:baseline;gap:14px;}
+  .leg-bar{width:34px;height:2px;display:inline-block;}
+  .leg-bar.inv{background:var(--invested);}
+  .leg-bar.val{background:var(--value);}
+  .leg .lab{font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:var(--muted);}
+  .leg .amt{font-family:'Instrument Serif',serif;font-size:24px;letter-spacing:-0.01em;color:var(--ink);}
+  .leg.val .amt{color:var(--value);}
+
+  /* chart container */
+  .chart-card{background:var(--paper);border:1px solid var(--rule);padding:32px;border-radius:4px;margin-bottom:36px;}
+  .chart-wrap{position:relative;height:420px;}
+
+  /* summary stats */
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:0;background:var(--paper);border:1px solid var(--rule);border-radius:4px;overflow:hidden;}
+  .stat{padding:24px 22px;border-right:1px solid var(--rule);}
+  .stat:last-child{border-right:none;}
+  .stat .k{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:var(--muted);margin-bottom:10px;}
+  .stat .v{font-family:'Instrument Serif',serif;font-size:30px;letter-spacing:-0.01em;line-height:1;}
+  .stat .v.pos{color:var(--value);}
+
+  /* note */
+  .note{margin-top:30px;font-size:13px;color:var(--muted);font-style:italic;text-align:center;line-height:1.6;}
+
+  /* responsive */
+  @media(max-width:700px){
+    body{padding:36px 18px 60px;}
+    .controls{grid-template-columns:1fr;gap:14px;}
+    button.run{width:100%;}
+    .stats{grid-template-columns:1fr 1fr;}
+    .stat{border-bottom:1px solid var(--rule);}
+    .stat:nth-child(2){border-right:none;}
+    .stat:nth-last-child(-n+2){border-bottom:none;}
+    .legend{gap:20px;}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="top">
+    <div class="brand">A Dollar a Day <em>— a backtest</em></div>
+    <div class="meta">v2</div>
+  </div>
+
+  <div class="hero">
+    <div class="eyebrow">The boring magic of compounding</div>
+    <h1>What if you invested <em>$1 every trading day</em><br>into one stock — and held?</h1>
+    <p class="lede">Type a ticker. Pick a start year. We'll simulate buying $1 of stock every market day since then, reinvesting every dividend, and show you what you'd have today.</p>
+  </div>
+
+  <div class="controls">
+    <div class="field">
+      <label for="tk">Ticker</label>
+      <input id="tk" class="ticker" value="MCD" maxlength="6" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="field">
+      <label for="yr">Start year</label>
+      <input id="yr" type="number" value="1985" min="1900" max="2026">
+    </div>
+    <button class="run" id="run">Run backtest</button>
+  </div>
+
+  <div class="status" id="status"></div>
+
+  <div class="results" id="results">
+
+    <div class="legend">
+      <div class="leg">
+        <span class="leg-bar inv"></span>
+        <div>
+          <div class="lab">Total invested</div>
+          <div class="amt" id="legInv">—</div>
+        </div>
+      </div>
+      <div class="leg val">
+        <span class="leg-bar val"></span>
+        <div>
+          <div class="lab">Portfolio value <span style="color:var(--muted);font-family:'JetBrains Mono',monospace;font-size:9px;">· dividends reinvested</span></div>
+          <div class="amt" id="legVal">—</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="chart-card">
+      <div class="chart-wrap"><canvas id="chart"></canvas></div>
+    </div>
+
+    <div class="stats">
+      <div class="stat">
+        <div class="k">Years held</div>
+        <div class="v" id="sYears">—</div>
+      </div>
+      <div class="stat">
+        <div class="k">Total gain</div>
+        <div class="v pos" id="sGain">—</div>
+      </div>
+      <div class="stat">
+        <div class="k">Multiple</div>
+        <div class="v" id="sMult">—</div>
+      </div>
+      <div class="stat">
+        <div class="k">Annualized</div>
+        <div class="v" id="sAnn">—</div>
+      </div>
+    </div>
+
+    <p class="note">Past performance doesn't predict the future. Survivorship bias is real — this only works on tickers that survived. The boring lesson is the gap between the two lines.</p>
+  </div>
+
+</div>
+
+<script>
+// ============ DATA FETCH ============
+// Prices come from a tiny Netlify function (netlify/functions/prices.js) that
+// proxies Yahoo Finance's chart endpoint server-side. Doing it server-side
+// dodges Yahoo's missing CORS headers, and it means no API key, no signup,
+// and the full available history in a single request instead of FMP's
+// free-tier 5-year wall. The returned `adj` field is split AND dividend
+// adjusted, so the same simulate() math below still holds.
+
+const $ = id => document.getElementById(id);
+const fmtUSD = n => "$" + Math.round(n).toLocaleString();
+const fmtUSDk = n => n >= 1000 ? "$" + Math.round(n).toLocaleString() : "$" + n.toFixed(2);
+
+let chart = null;
+
+async function fetchPrices(ticker) {
+  let res;
+  try {
+    res = await fetch(`/.netlify/functions/prices?symbol=${encodeURIComponent(ticker)}`);
+  } catch (e) {
+    throw new Error(`Network error: ${e.message}. Check your internet.`);
+  }
+
+  let data;
+  try { data = await res.json(); }
+  catch (e) { throw new Error("Got a non-JSON response from the price service."); }
+
+  if (!res.ok || data.error) {
+    throw new Error(data.error || `HTTP ${res.status} from the price service.`);
+  }
+  if (!Array.isArray(data.rows) || data.rows.length < 50) {
+    throw new Error(`Not enough price data for "${ticker}" — check the ticker symbol.`);
+  }
+  return data.rows; // [{date, adj}, ...] oldest first
+}
+
+// ============ SIMULATION ============
+// Buy $1 of (adjusted close) every trading day. Adjusted close already accounts for
+// reinvested dividends and splits, so portfolio value = sum of shares * adjusted close
+// on each day, which simplifies beautifully.
+//
+// Method: each day d, we buy 1/adj_d shares. Adj close already reflects total return,
+// so if we own N total "share-equivalents" with average reinvested basis, the value
+// at any later date = (cumulative shares_bought_at_each_day * adj_today / adj_thatday)
+// We track two arrays for the chart: invested[i] (just $1 * i) and value[i].
+function simulate(rows) {
+  // For each day i: buy 1 / rows[i].adj "units" of return-shares
+  // After day i: portfolio value at day j (j >= i) =
+  //   sum over k=0..j of (1 / rows[k].adj) * rows[j].adj
+  //   = rows[j].adj * sum_{k=0..j} (1 / rows[k].adj)
+  // So we can maintain a running cumulative sum of (1/adj).
+  let runningInvUnits = 0;
+  const points = [];
+  for (let i = 0; i < rows.length; i++) {
+    runningInvUnits += 1 / rows[i].adj;
+    const value = rows[i].adj * runningInvUnits;
+    const invested = i + 1; // $1 per day
+    points.push({ date: rows[i].date, invested, value });
+  }
+  return points;
+}
+
+// Sample down points so the chart isn't trying to render 10,000 days
+function sampleDown(points, target = 600) {
+  if (points.length <= target) return points;
+  const step = points.length / target;
+  const out = [];
+  for (let i = 0; i < target; i++) {
+    out.push(points[Math.floor(i * step)]);
+  }
+  out.push(points[points.length - 1]); // always include final point
+  return out;
+}
+
+// ============ CHART ============
+function drawChart(points) {
+  const ctx = $("chart").getContext("2d");
+  if (chart) chart.destroy();
+
+  const sampled = sampleDown(points);
+  const labels = sampled.map(p => p.date.slice(0, 4)); // year only for ticks
+  const invData = sampled.map(p => p.invested);
+  const valData = sampled.map(p => p.value);
+
+  chart = new Chart(ctx, {
+    type: "line",
+    data: {
+      labels,
+      datasets: [
+        {
+          label: "Total invested",
+          data: invData,
+          borderColor: "#1A1A1A",
+          backgroundColor: "rgba(26,26,26,0)",
+          borderWidth: 1.5,
+          pointRadius: 0,
+          tension: 0.1,
+        },
+        {
+          label: "Portfolio value",
+          data: valData,
+          borderColor: "#B85C38",
+          backgroundColor: "rgba(184,92,56,0.06)",
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.1,
+          fill: true,
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: "#1A1A1A",
+          padding: 12,
+          titleFont: { family: "JetBrains Mono", size: 11, weight: "500" },
+          bodyFont: { family: "Inter", size: 13 },
+          callbacks: {
+            label: (c) => `${c.dataset.label}: ${fmtUSD(c.parsed.y)}`
+          }
+        }
+      },
+      scales: {
+        x: {
+          grid: { color: "#E5E3DE", display: false },
+          ticks: {
+            color: "#8B8B8B",
+            font: { family: "JetBrains Mono", size: 10 },
+            maxTicksLimit: 10,
+            callback: function(val, i, ticks) {
+              // show year, skip duplicates
+              const lab = this.getLabelForValue(val);
+              if (i === 0) return lab;
+              const prev = this.getLabelForValue(ticks[i-1].value);
+              return lab !== prev ? lab : "";
+            }
+          }
+        },
+        y: {
+          grid: { color: "#E5E3DE" },
+          border: { display: false },
+          ticks: {
+            color: "#8B8B8B",
+            font: { family: "JetBrains Mono", size: 10 },
+            callback: (v) => fmtUSDk(v)
+          }
+        }
+      }
+    }
+  });
+}
+
+// ============ MAIN ============
+async function run() {
+  const ticker = $("tk").value.trim().toUpperCase();
+  const startYear = parseInt($("yr").value, 10);
+  const thisYear = new Date().getFullYear();
+  if (!ticker) return setStatus("Type a ticker first.", true);
+  if (!startYear || startYear < 1900 || startYear > thisYear) return setStatus(`Pick a year between 1900 and ${thisYear}.`, true);
+
+  const btn = $("run");
+  btn.disabled = true;
+  btn.textContent = "Loading…";
+  setStatus(`<span class="blink"></span>Pulling ${ticker}'s full price history…`);
+  $("results").classList.remove("shown");
+
+  try {
+    const allRows = await fetchPrices(ticker);
+
+    const requestedStart = `${startYear}-01-01`;
+    const earliestAvail = allRows[0].date;
+    let rows, clipNote = "";
+    if (earliestAvail > requestedStart) {
+      rows = allRows;
+      clipNote = ` — data for ${ticker} only goes back to ${earliestAvail}, showing full history from there`;
+    } else {
+      rows = allRows.filter(r => r.date >= requestedStart);
+    }
+    if (rows.length < 50) throw new Error(`Not enough price data for "${ticker}" since ${startYear}.`);
+
+    setStatus(`<span class="blink"></span>Got ${rows.length.toLocaleString()} trading days. Simulating…`);
+
+    const points = simulate(rows);
+    const last = points[points.length - 1];
+    const first = points[0];
+
+    drawChart(points);
+
+    const totalInvested = last.invested;
+    const finalValue = last.value;
+    const gain = finalValue - totalInvested;
+    const mult = finalValue / totalInvested;
+    const years = (new Date(last.date) - new Date(first.date)) / (365.25 * 24 * 3600 * 1000);
+    const ann = (Math.pow(finalValue / totalInvested, 1 / years) - 1) * 100;
+
+    $("legInv").textContent = fmtUSD(totalInvested);
+    $("legVal").textContent = fmtUSD(finalValue);
+    $("sYears").textContent = years.toFixed(1);
+    $("sGain").textContent = fmtUSD(gain);
+    $("sMult").textContent = mult.toFixed(1) + "×";
+    $("sAnn").textContent = ann.toFixed(1) + "%";
+
+    $("results").classList.add("shown");
+    setStatus(`${ticker} · ${first.date} → ${last.date} · ${rows.length.toLocaleString()} trading days simulated.${clipNote}`);
+  } catch (e) {
+    setStatus(`Error: ${e.message}`, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Run backtest";
+  }
+}
+
+function setStatus(html, isErr=false) {
+  const s = $("status");
+  s.innerHTML = html;
+  s.className = "status" + (isErr ? " err" : "");
+}
+
+$("run").addEventListener("click", run);
+$("tk").addEventListener("keydown", e => { if (e.key === "Enter") run(); });
+$("yr").addEventListener("keydown", e => { if (e.key === "Enter") run(); });
+
+// Keep the year field's max realistic without needing a redeploy every January
+window.addEventListener("load", () => {
+  $("yr").max = new Date().getFullYear();
+  setStatus("Type a ticker and a start year, then run the backtest.");
+});
+</script>
+</body>
+</html>
