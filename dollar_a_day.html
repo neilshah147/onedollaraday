@@ -164,7 +164,7 @@
         <div class="v" id="sMult">—</div>
       </div>
       <div class="stat">
-        <div class="k">Annualized</div>
+        <div class="k" title="Money-weighted return (XIRR) — accounts for when each dollar was actually invested, same method Fidelity/Vanguard use for 'Personal Rate of Return'">Annualized</div>
         <div class="v" id="sAnn">—</div>
       </div>
     </div>
@@ -246,6 +246,63 @@ function sampleDown(points, target = 600) {
   }
   out.push(points[points.length - 1]); // always include final point
   return out;
+}
+
+// ============ XIRR (money-weighted annualized return) ============
+// "Annualized" for a recurring-contribution strategy is NOT
+// (finalValue/totalInvested)^(1/years)-1 — that formula treats the whole
+// pile of invested cash as if it were one lump sum dropped in on day one,
+// which understates the real return since most dollars went in much later
+// and had far less time to compound. The financially correct method is
+// the money-weighted rate of return — the same thing Excel/Sheets' XIRR
+// computes, and what Fidelity/Vanguard show you as "Personal Rate of
+// Return": solve for the single annual rate r that makes the NPV of every
+// dated cash flow (each day's $1 contribution, plus the final payout) equal
+// zero.
+function xirr(cashflows, dates) {
+  const msPerYear = 365.25 * 24 * 3600 * 1000;
+  const t0 = dates[0].getTime();
+  const t = dates.map(d => (d.getTime() - t0) / msPerYear);
+
+  function npv(r) {
+    let sum = 0;
+    for (let i = 0; i < cashflows.length; i++) sum += cashflows[i] / Math.pow(1 + r, t[i]);
+    return sum;
+  }
+  function npvDeriv(r) {
+    let sum = 0;
+    for (let i = 0; i < cashflows.length; i++) {
+      if (t[i] === 0) continue;
+      sum += -t[i] * cashflows[i] / Math.pow(1 + r, t[i] + 1);
+    }
+    return sum;
+  }
+
+  // Newton's method first — fast and precise when it converges.
+  let r = 0.1;
+  for (let iter = 0; iter < 100; iter++) {
+    const f = npv(r);
+    if (Math.abs(f) < 1e-7) return r;
+    const fp = npvDeriv(r);
+    if (fp === 0) break;
+    const next = r - f / fp;
+    if (!isFinite(next) || next <= -1) break;
+    r = next;
+  }
+
+  // Fallback: bisection over a generous range (-99% to +1000% annual).
+  // Robust even when Newton's method misbehaves on tricky cash flow shapes.
+  let lo = -0.99, hi = 10;
+  let fLo = npv(lo), fHi = npv(hi);
+  if (fLo * fHi > 0) return NaN; // no sign change in range -> can't solve
+  for (let iter = 0; iter < 200; iter++) {
+    const mid = (lo + hi) / 2;
+    const fMid = npv(mid);
+    if (Math.abs(fMid) < 1e-9) return mid;
+    if ((fLo < 0) === (fMid < 0)) { lo = mid; fLo = fMid; }
+    else { hi = mid; fHi = fMid; }
+  }
+  return (lo + hi) / 2;
 }
 
 // ============ CHART ============
@@ -371,14 +428,23 @@ async function run() {
     const gain = finalValue - totalInvested;
     const mult = finalValue / totalInvested;
     const years = (new Date(last.date) - new Date(first.date)) / (365.25 * 24 * 3600 * 1000);
-    const ann = (Math.pow(finalValue / totalInvested, 1 / years) - 1) * 100;
+
+    // Build the real dated cash flow stream for XIRR: -$1 contributed each
+    // trading day, plus the whole portfolio realized (added back) on the
+    // last day. This is what actually determines a DCA strategy's return —
+    // not treating totalInvested as a single lump sum invested on day one.
+    const cfDates = points.map(p => new Date(p.date));
+    const cashflows = points.map(() => -1);
+    cashflows[cashflows.length - 1] += finalValue;
+    const annRate = xirr(cashflows, cfDates);
+    const ann = isFinite(annRate) ? annRate * 100 : NaN;
 
     $("legInv").textContent = fmtUSD(totalInvested);
     $("legVal").textContent = fmtUSD(finalValue);
     $("sYears").textContent = years.toFixed(1);
     $("sGain").textContent = fmtUSD(gain);
     $("sMult").textContent = mult.toFixed(1) + "×";
-    $("sAnn").textContent = ann.toFixed(1) + "%";
+    $("sAnn").textContent = isFinite(ann) ? ann.toFixed(1) + "%" : "n/a";
 
     $("results").classList.add("shown");
     setStatus(`${ticker} · ${first.date} → ${last.date} · ${rows.length.toLocaleString()} trading days simulated.${clipNote}`);
