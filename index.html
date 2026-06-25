@@ -9,6 +9,37 @@
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=JetBrains+Mono:wght@400;500&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
+  /*
+    COLOR SYSTEM NOTES (read this before touching any color below):
+
+    --value (rust) is reserved EXCLUSIVELY for single-ticker mode's chart
+    line and legend entry. The moment a second ticker is being compared,
+    rust disappears from the page entirely -- replaced by --ticker1 /
+    --ticker2. This was a deliberate decision: rust always meaning
+    "the one ticker you're looking at" would be confusing once there are
+    two lines, since neither would have a clear claim to "the" default
+    color. Full discussion: we considered coloring entire compare-mode
+    stat blocks by ticker color and rejected it -- color-coding the WHOLE
+    block would make rust-for-gain (which means something specific
+    elsewhere on the page) ambiguous. Instead only a small swatch + the
+    chart line itself carry ticker color; the numbers inside each stat
+    block stay black/green/red exactly like single-ticker mode.
+
+    --gain-pos / --gain-neg are NEW in v3. Before v3, "Total gain" was
+    unconditionally rust regardless of sign -- meaning a real loss would
+    have displayed in the same "everything's great" color as a real gain.
+    That was a latent honesty bug. Now gain is green when positive, red
+    when negative, and -- per explicit request -- the red was chosen to
+    NOT read as a duller rust: rust is orange-leaning, this red leans
+    toward crimson/magenta instead, so the two are easy to tell apart even
+    sitting near each other in single-ticker mode (where the chart line is
+    still rust, but the gain number can now be red).
+
+    --lump is the dashed gold/amber overlay line representing "what if you
+    invested it all on day one." Deliberately not rust, not ticker1/2 --
+    it's a fourth, distinct hue because it represents a fundamentally
+    different (hypothetical) thing, not a fourth real ticker.
+  */
   :root {
     --bg: #FAF9F6;
     --paper: #ffffff;
@@ -17,8 +48,12 @@
     --muted: #8B8B8B;
     --rule: #E5E3DE;
     --invested: #1A1A1A;
-    --value: #B85C38;
-    --accent: #1A1A1A;
+    --value: #B85C38;     /* rust -- single-ticker mode ONLY, never used when comparing */
+    --ticker1: #0E8074;   /* teal -- ticker 1's line/swatch when comparing two tickers */
+    --ticker2: #A23E87;   /* plum/magenta -- ticker 2's line/swatch when comparing */
+    --gain-pos: #4F7A52;  /* muted green -- Total Gain when positive (replaces old hardcoded rust) */
+    --gain-neg: #B6303A;  /* crimson -- Total Gain when negative. Chosen to NOT look like rust. */
+    --lump: #B8923D;      /* muted gold -- the dashed lump-sum-CAGR overlay line on the chart */
   }
   *{margin:0;padding:0;box-sizing:border-box;}
   html,body{background:var(--bg);color:var(--ink);font-family:'Inter',sans-serif;font-weight:400;-webkit-font-smoothing:antialiased;}
@@ -38,11 +73,8 @@
   h1 em{font-style:italic;color:var(--value);}
   .lede{font-size:16px;color:var(--ink-soft);max-width:58ch;line-height:1.6;}
 
-  /* controls */
+  /* controls: ticker, start date, run button */
   .controls{display:grid;grid-template-columns:1.4fr 1fr auto;gap:14px;align-items:end;background:var(--paper);border:1px solid var(--rule);padding:22px;border-radius:4px;margin-bottom:14px;}
-  .toggles{margin-bottom:36px;}
-  .toggle{display:flex;align-items:center;gap:8px;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--ink-soft);cursor:pointer;user-select:none;}
-  .toggle input{accent-color:var(--value);width:14px;height:14px;cursor:pointer;}
   .field label{display:block;font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:var(--muted);margin-bottom:8px;}
   .field input{width:100%;padding:11px 14px;background:var(--bg);border:1px solid var(--rule);border-radius:3px;font-family:'JetBrains Mono',monospace;font-size:15px;color:var(--ink);transition:border-color .15s;}
   .field input:focus{outline:none;border-color:var(--ink);}
@@ -51,39 +83,94 @@
   button.run:hover{background:var(--value);}
   button.run:disabled{background:var(--muted);cursor:wait;}
 
-  /* status */
+  /* NEW v3: the second ticker field, only revealed when "Compare a second
+     ticker" is checked. Kept visually identical to the first ticker field
+     (same .field/.ticker classes) so it doesn't read as a different kind
+     of input -- just a second instance of the same control. */
+  .field2{margin-bottom:14px;max-width:340px;}
+
+  /* toggles: checkboxes for compare / lump-sum CAGR / overlay-on-chart.
+     .toggle.nested is indented so it visually reads as "this depends on
+     the checkbox above it" -- the indent is the primary signal, the
+     grayed-out/disabled state is the secondary one. .toggle.disabled
+     dims the whole row (label text included, not just the checkbox)
+     so it's unambiguous that the row is currently inert. */
+  .toggles{margin-bottom:36px;}
+  .toggle{display:flex;align-items:center;gap:8px;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--ink-soft);cursor:pointer;user-select:none;margin-bottom:8px;}
+  .toggle input{accent-color:var(--value);width:14px;height:14px;cursor:pointer;}
+  .toggle.nested{margin-left:26px;}
+  .toggle.disabled{opacity:0.4;cursor:not-allowed;}
+  .toggle.disabled input{cursor:not-allowed;}
+
+  /* status line (loading / error / result summary text above the chart) */
   .status{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--muted);margin-bottom:24px;min-height:18px;}
   .status.err{color:var(--value);}
   .status .blink{display:inline-block;width:8px;height:8px;background:var(--value);border-radius:50%;margin-right:8px;vertical-align:middle;animation:p 1.4s infinite;}
   @keyframes p{0%,100%{opacity:.3;}50%{opacity:1;}}
 
-  /* results */
+  /* results wrapper -- hidden until a backtest has actually run once */
   .results{display:none;}
   .results.shown{display:block;}
+
+  /* legend above the chart: "Total invested" is always black/shared.
+     Each "Portfolio value" entry's bar color is set dynamically in JS
+     (rust in single mode, ticker1/ticker2 colors when comparing) rather
+     than being hardcoded in CSS, since the same markup serves both modes. */
   .legend{display:flex;gap:36px;margin-bottom:24px;flex-wrap:wrap;}
   .leg{display:flex;align-items:baseline;gap:14px;}
   .leg-bar{width:34px;height:2px;display:inline-block;}
-  .leg-bar.inv{background:var(--invested);}
-  .leg-bar.val{background:var(--value);}
+  /* Color-state classes -- per code review feedback, replaces JS doing
+     element.style.background/color = "..." directly. JS now just picks
+     WHICH state an element is in (toggling one of these classes); CSS
+     alone decides what that state actually looks like, reusing the same
+     --ticker1/--ticker2/--value variables already defined above. */
+  .bar-rust{background:var(--value);}
+  .bar-ticker1{background:var(--ticker1);}
+  .bar-ticker2{background:var(--ticker2);}
+  .text-rust{color:var(--value);}
+  .text-ticker1{color:var(--ticker1);}
+  .text-ticker2{color:var(--ticker2);}
   .leg .lab{font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:var(--muted);}
   .leg .amt{font-family:'Instrument Serif',serif;font-size:24px;letter-spacing:-0.01em;color:var(--ink);}
-  .leg.val .amt{color:var(--value);}
 
   /* chart container */
   .chart-card{background:var(--paper);border:1px solid var(--rule);padding:32px;border-radius:4px;margin-bottom:36px;}
   .chart-wrap{position:relative;height:420px;}
 
-  /* summary stats */
-  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:0;background:var(--paper);border:1px solid var(--rule);border-radius:4px;overflow:hidden;}
+  /* NEW v3 stat block structure.
+     Single-ticker mode and compare mode now share ONE markup pattern
+     instead of two separate grids: a ".tblock" card (border/bg/radius)
+     containing an optional ".tblock-head" (swatch + ticker name -- hidden
+     in single-ticker mode, shown when comparing) and a ".stats" grid of
+     individual ".stat" tiles inside it. Single-ticker mode is just
+     "tblock #1, with its head hidden, tblock #2 absent." Compare mode is
+     "both tblocks, both heads visible." This means there is exactly one
+     piece of rendering logic (see renderStatBlock() in the script) that
+     fills in either block -- no separate single-mode-only code path. */
+  .tblock{background:var(--paper);border:1px solid var(--rule);border-radius:4px;overflow:hidden;}
+  .tblock + .tblock{margin-top:20px;}
+  .tblock-head{display:flex;align-items:center;gap:10px;padding:16px 22px;border-bottom:1px solid var(--rule);}
+  .swatch{width:14px;height:14px;border-radius:3px;display:inline-block;flex-shrink:0;}
+  .tname{font-family:'Instrument Serif',serif;font-size:20px;color:var(--ink);letter-spacing:0.02em;}
+
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:0;}
   .stat{padding:24px 22px;border-right:1px solid var(--rule);}
   .stat:last-child{border-right:none;}
   .stat .k{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:var(--muted);margin-bottom:10px;}
   .stat .v{font-family:'Instrument Serif',serif;font-size:30px;letter-spacing:-0.01em;line-height:1;}
-  .stat .v.pos{color:var(--value);}
+  /* Total Gain coloring -- NEW v3. Replaces the old unconditional ".pos"
+     rust class. JS adds exactly one of these two classes based on the
+     actual sign of the computed gain, in BOTH single and compare mode. */
+  .stat .v.gain-pos{color:var(--gain-pos);}
+  .stat .v.gain-neg{color:var(--gain-neg);}
+  /* The 5th tile (Lump-sum CAGR) spans the full row width below the other
+     four, with its own top border, rather than squeezing into a 5th
+     column -- this is what makes it read as "an extra, optional stat"
+     instead of a cramped addition to the main grid. */
   .stat:nth-child(5){grid-column:1/-1;border-right:none;border-top:1px solid var(--rule);}
   .hidden{display:none !important;}
 
-  /* note */
+  /* note / caveat text below the stats */
   .note{margin-top:30px;font-size:13px;color:var(--muted);font-style:italic;text-align:center;line-height:1.6;}
   .caveat{margin-top:16px;font-size:13px;color:var(--value);font-weight:500;text-align:center;line-height:1.6;}
 
@@ -105,48 +192,99 @@
 
   <div class="top">
     <div class="brand">A Dollar a Day <em>— a backtest</em></div>
-    <div class="meta">v2.1</div>
+    <div class="meta">v3</div>
   </div>
 
   <div class="hero">
     <div class="eyebrow">The boring magic of compounding</div>
     <h1>What if you invested <em>$1 every trading day</em><br>into one stock — and held?</h1>
-    <p class="lede">Type a ticker. Pick a start year. We'll simulate buying $1 of stock every market day since then, reinvesting every dividend, and show you what you'd have today.</p>
+    <p class="lede">Type a ticker. Pick a start date. We'll simulate buying $1 of stock every market day since then, reinvesting every dividend, and show you what you'd have today.</p>
   </div>
 
   <div class="controls">
     <div class="field">
       <label for="tk">Ticker</label>
-      <input id="tk" class="ticker" value="MCD" maxlength="6" autocomplete="off" spellcheck="false">
+      <!-- Default changed from MCD to JNJ in v3 -- not tied to one
+           specific consumer brand, and JNJ's data goes back to
+           1962-01-02 (verified), the oldest real starting point this
+           data source has for any ticker. -->
+      <input id="tk" class="ticker" value="JNJ" maxlength="6" autocomplete="off" spellcheck="false">
     </div>
     <div class="field">
-      <label for="yr">Start year</label>
-      <input id="yr" type="number" value="1985" min="1900" max="2026">
+      <label for="dt">Start date</label>
+      <!--
+        NEW v3: real date picker instead of a "start year" number field.
+        min is set to 1962-01-02 -- verified empirically (multiple
+        unrelated tickers all hit this exact same wall in Yahoo's data,
+        and Jan 1, 1962 itself is impossible since New Year's Day is
+        always a market holiday). max is set dynamically on page load
+        (see the load listener at the bottom of the script) so it never
+        needs a redeploy to stay accurate as years pass.
+      -->
+      <input id="dt" type="date" value="1985-01-01" min="1962-01-02">
     </div>
     <button class="run" id="run">Run backtest</button>
   </div>
 
+  <!-- NEW v3: second ticker field for compare mode. Hidden by default;
+       revealed by the "Compare a second ticker" checkbox below. Uses the
+       exact same .field/.ticker styling as the primary ticker input so
+       it doesn't read as a visually different kind of control. -->
+  <div class="field field2 hidden" id="tk2Field">
+    <label for="tk2">Compare against</label>
+    <input id="tk2" class="ticker" maxlength="6" autocomplete="off" spellcheck="false" placeholder="e.g. VOO">
+  </div>
+
   <div class="toggles">
     <label class="toggle"><input type="checkbox" id="showLump"> Show lump-sum CAGR for comparison</label>
+    <!-- NEW v3: nested under "Show lump-sum CAGR" specifically (not under
+         compare) -- this checkbox controls whether the lump-sum line is
+         drawn ON the chart, separate from whether the lump-sum CAGR stat
+         is shown in the stat block. Starts disabled+unchecked; only
+         becomes usable once its parent is checked (see updateLumpVisibility
+         in the script). Also force-hidden whenever compare mode is on,
+         since overlaying a single hypothetical line stops making sense
+         once there are two real tickers on the chart already. -->
+    <label class="toggle nested disabled" id="overlayRow">
+      <input type="checkbox" id="overlayLump" disabled> Overlay on chart
+    </label>
+    <label class="toggle"><input type="checkbox" id="compareToggle"> Compare a second ticker</label>
   </div>
 
   <div class="status" id="status"></div>
 
   <div class="results" id="results">
 
+    <!--
+      Legend above the chart. "Total invested" is always one shared
+      entry (black) since both tickers in compare mode are aligned to the
+      same start date and therefore have identical totalInvested. There
+      are two "Portfolio value" slots: #legValRow1 is always shown,
+      #legValRow2 is only shown when comparing. The bar color and label
+      text for each row are set in JS, not hardcoded here, because the
+      same markup has to represent "rust, single ticker" in one mode and
+      "teal, ticker 1 of 2" in the other.
+    -->
     <div class="legend">
       <div class="leg">
-        <span class="leg-bar inv"></span>
+        <span class="leg-bar" style="background:var(--invested);"></span>
         <div>
           <div class="lab">Total invested</div>
           <div class="amt" id="legInv">—</div>
         </div>
       </div>
-      <div class="leg val">
-        <span class="leg-bar val"></span>
+      <div class="leg" id="legValRow1">
+        <span class="leg-bar" id="legBar1"></span>
         <div>
-          <div class="lab">Portfolio value <span style="color:var(--muted);font-family:'JetBrains Mono',monospace;font-size:9px;">· dividends reinvested</span></div>
-          <div class="amt" id="legVal">—</div>
+          <div class="lab" id="legLabel1">Portfolio value <span style="color:var(--muted);font-family:'JetBrains Mono',monospace;font-size:9px;">· dividends reinvested</span></div>
+          <div class="amt text-rust" id="legVal1">—</div>
+        </div>
+      </div>
+      <div class="leg hidden" id="legValRow2">
+        <span class="leg-bar" id="legBar2"></span>
+        <div>
+          <div class="lab" id="legLabel2">Portfolio value <span style="color:var(--muted);font-family:'JetBrains Mono',monospace;font-size:9px;">· dividends reinvested</span></div>
+          <div class="amt" id="legVal2">—</div>
         </div>
       </div>
     </div>
@@ -155,26 +293,69 @@
       <div class="chart-wrap"><canvas id="chart"></canvas></div>
     </div>
 
-    <div class="stats" id="statsGrid">
-      <div class="stat">
-        <div class="k">Years held</div>
-        <div class="v" id="sYears">—</div>
+    <!--
+      Stat blocks. Block 1 is always rendered. Block 2 only appears (and
+      its sibling block 1's header only becomes visible) when comparing.
+      Every id below is suffixed "1" or "2" -- the JS renderStatBlock()
+      function takes a suffix argument and fills in whichever block you
+      pass it, so there is exactly one block of rendering code, not two
+      copy-pasted ones.
+    -->
+    <div id="tblock1" class="tblock">
+      <div class="tblock-head hidden" id="thead1">
+        <span class="swatch" id="swatch1"></span>
+        <span class="tname" id="tname1">—</span>
       </div>
-      <div class="stat">
-        <div class="k">Total gain</div>
-        <div class="v pos" id="sGain">—</div>
+      <div class="stats">
+        <div class="stat">
+          <div class="k">Years held</div>
+          <div class="v" id="sYears1">—</div>
+        </div>
+        <div class="stat">
+          <div class="k">Total gain</div>
+          <div class="v" id="sGain1">—</div>
+        </div>
+        <div class="stat">
+          <div class="k">Multiple</div>
+          <div class="v" id="sMult1">—</div>
+        </div>
+        <div class="stat">
+          <div class="k" title="Money-weighted return (XIRR) — accounts for when each dollar was actually invested, same method Fidelity/Vanguard use for 'Personal Rate of Return'">Annualized</div>
+          <div class="v" id="sAnn1">—</div>
+        </div>
+        <div class="stat hidden" id="lumpTile1">
+          <div class="k" title="The same total dollars invested all at once on day one and held — the stock's own buy-and-hold return, not the $1/day strategy">Lump-sum CAGR</div>
+          <div class="v" id="sLump1">—</div>
+        </div>
       </div>
-      <div class="stat">
-        <div class="k">Multiple</div>
-        <div class="v" id="sMult">—</div>
+    </div>
+
+    <div id="tblock2" class="tblock hidden">
+      <div class="tblock-head" id="thead2">
+        <span class="swatch" id="swatch2"></span>
+        <span class="tname" id="tname2">—</span>
       </div>
-      <div class="stat">
-        <div class="k" title="Money-weighted return (XIRR) — accounts for when each dollar was actually invested, same method Fidelity/Vanguard use for 'Personal Rate of Return'">Annualized</div>
-        <div class="v" id="sAnn">—</div>
-      </div>
-      <div class="stat hidden" id="lumpStatTile">
-        <div class="k" title="The same total dollars invested all at once on day one and held — the stock's own buy-and-hold return, not the $1/day strategy">Lump-sum CAGR</div>
-        <div class="v" id="sLump">—</div>
+      <div class="stats">
+        <div class="stat">
+          <div class="k">Years held</div>
+          <div class="v" id="sYears2">—</div>
+        </div>
+        <div class="stat">
+          <div class="k">Total gain</div>
+          <div class="v" id="sGain2">—</div>
+        </div>
+        <div class="stat">
+          <div class="k">Multiple</div>
+          <div class="v" id="sMult2">—</div>
+        </div>
+        <div class="stat">
+          <div class="k" title="Money-weighted return (XIRR) — accounts for when each dollar was actually invested, same method Fidelity/Vanguard use for 'Personal Rate of Return'">Annualized</div>
+          <div class="v" id="sAnn2">—</div>
+        </div>
+        <div class="stat hidden" id="lumpTile2">
+          <div class="k" title="The same total dollars invested all at once on day one and held — the stock's own buy-and-hold return, not the $1/day strategy">Lump-sum CAGR</div>
+          <div class="v" id="sLump2">—</div>
+        </div>
       </div>
     </div>
 
@@ -188,21 +369,116 @@
 </div>
 
 <script>
-// ============ DATA FETCH ============
-// Prices come from a tiny Netlify function (netlify/functions/prices.js) that
-// proxies Yahoo Finance's chart endpoint server-side. Doing it server-side
-// dodges Yahoo's missing CORS headers, and it means no API key, no signup,
-// and the full available history in a single request instead of FMP's
-// free-tier 5-year wall. The returned `adj` field is split AND dividend
-// adjusted, so the same simulate() math below still holds.
+// ============ HELPERS ============
+// Per code review feedback: toggles a color-state class instead of
+// setting element.style directly. Removes all three possible states
+// first, then adds the one that applies -- needed because the SAME
+// element (e.g. legBar1) can switch between rust and ticker1 across
+// different runs (single-ticker mode, then compare mode, then back).
+function setColorClass(el, prefix, name) {
+  el.classList.remove(`${prefix}-rust`, `${prefix}-ticker1`, `${prefix}-ticker2`);
+  el.classList.add(`${prefix}-${name}`);
+}
 
 const $ = id => document.getElementById(id);
-const fmtUSD = n => "$" + Math.round(n).toLocaleString();
-const fmtUSDk = n => n >= 1000 ? "$" + Math.round(n).toLocaleString() : "$" + n.toFixed(2);
+
+// Format a dollar amount with the sign placed BEFORE the $, not after --
+// "-$84", never "$-84". This matters starting in v3 because Total Gain
+// can now genuinely be negative (single-ticker mode used to hardcode it
+// as always "positive-colored" regardless of actual sign, which was a
+// latent honesty bug -- fixed below in renderStatBlock()).
+function fmtUSD(n) {
+  const sign = n < 0 ? "-" : "";
+  return sign + "$" + Math.round(Math.abs(n)).toLocaleString();
+}
+// Same sign-placement rule, but keeps cents for small values -- used only
+// on the chart's y-axis ticks, where a $1/day strategy's early values are
+// tiny enough that "$1" vs "$1.40" actually matters to show.
+function fmtUSDk(n) {
+  const sign = n < 0 ? "-" : "";
+  const abs = Math.abs(n);
+  return sign + (abs >= 1000 ? "$" + Math.round(abs).toLocaleString() : "$" + abs.toFixed(2));
+}
+
+// Reformats a raw "YYYY-MM-DD" string into "Jan 3, 2021" for the chart's
+// hover tooltip (NEW in v3 -- before this, hovering only showed dollar
+// values, no date at all). new Date("2021-01-03") alone parses as UTC
+// midnight, which can silently roll back to the PREVIOUS calendar day
+// once the browser converts to local time (e.g. a US visitor would see
+// "Jan 2" instead of "Jan 3"). Appending an explicit local midnight time
+// sidesteps that entirely.
+function formatDateLabel(dateStr) {
+  const d = new Date(dateStr + "T00:00:00");
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+// ============ CACHING (NEW in v3) ============
+// In-memory only -- a plain JS object, NOT localStorage/sessionStorage.
+// Verified earlier that this has no meaningful size limit (bounded only
+// by device RAM, not any browser storage quota), and the user explicitly
+// confirmed it does NOT need to survive a page reload -- it's purely
+// about not re-hitting Yahoo's unofficial endpoint twice for the same
+// ticker within one sitting (e.g. testing several start dates on the
+// same ticker, or using it as ticker 2 in a comparison).
+const priceCache = {};
 
 let chart = null;
+let lumpDatasetIndex = -1; // index of the lump-sum dataset in the CURRENT chart, or -1 if it's absent (compare mode never adds it at all). Set inside drawChart(); read by the "Overlay on chart" checkbox handler so it knows which dataset to toggle.
 
+// ============ SECURITY: escaping + early validation ============
+// FIX (post-launch, after external code review): several places below
+// build status/legend text by string-concatenating ticker1/ticker2
+// directly into an innerHTML assignment. ticker1/ticker2 aren't just
+// "things the user typed" -- they can also be set from a URL query
+// parameter (?t=...&t2=...) on page load, with no length or character
+// restriction at that point (the <input maxlength> only limits typing
+// through the UI, it does nothing to a value set programmatically).
+// That means a crafted shareable link containing something like
+// <img src=x onerror=...> as the ticker name would have rendered live,
+// executable markup the moment it hit one of those innerHTML lines --
+// a real, working reflected-XSS path, not a theoretical one.
+//
+// Two layers of defense, not just one:
+//   1. TICKER_PATTERN rejects anything that doesn't look like a real
+//      ticker immediately, before it's used anywhere -- the same shape
+//      the backend (prices.js) already enforces server-side.
+//   2. escapeHtml() is used on every dynamic fragment that still ends up
+//      inside an innerHTML string regardless (including third-party text
+//      that flows through, like a raw error description from Yahoo) --
+//      so the page is safe even if validation #1 were ever loosened,
+//      bypassed, or simply forgotten in some future code path.
+const TICKER_PATTERN = /^[A-Z0-9.\-]{1,10}$/;
+
+// Named per code review feedback -- both appear in multiple places and
+// need to stay consistent, so one name beats hunting down every literal
+// occurrence by hand.
+const MIN_TRADING_DAYS = 50;     // below this, a backtest isn't meaningful -- too short a window to say anything real
+const DAYS_PER_YEAR = 365.25;    // average, accounting for leap years -- used everywhere a date range gets converted into a fractional number of years
+
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+// ============ DATA FETCH ============
+// Prices come from a tiny Netlify function (netlify/functions/prices.js)
+// that proxies Yahoo Finance's chart endpoint server-side. Server-side
+// dodges Yahoo's missing CORS headers, and it means no API key, no
+// signup, and the full available history in one request instead of
+// FMP's free-tier 5-year wall. The returned `adj` field is split AND
+// dividend adjusted, so simulate() below can treat it as a clean
+// total-return series.
 async function fetchPrices(ticker) {
+  // NEW in v3: check the in-memory cache first. A cache hit returns
+  // instantly with zero network activity -- this is the entire caching
+  // feature; everything else about this function is unchanged from
+  // before v3.
+  if (priceCache[ticker]) return priceCache[ticker];
+
   let res;
   try {
     res = await fetch(`/.netlify/functions/prices?symbol=${encodeURIComponent(ticker)}`);
@@ -217,27 +493,33 @@ async function fetchPrices(ticker) {
   if (!res.ok || data.error) {
     throw new Error(data.error || `HTTP ${res.status} from the price service.`);
   }
-  if (!Array.isArray(data.rows) || data.rows.length < 50) {
+  if (!Array.isArray(data.rows) || data.rows.length < MIN_TRADING_DAYS) {
     throw new Error(`Not enough price data for "${ticker}" — check the ticker symbol.`);
   }
-  return data.rows; // [{date, adj}, ...] oldest first
+
+  // Cache the FULL unfiltered history, not yet clipped to whatever start
+  // date was requested. That's deliberate: a cache entry needs to be
+  // reusable no matter what date range a later request asks for, so we
+  // cache the broadest possible version and let the caller filter it.
+  priceCache[ticker] = data.rows; // [{date, adj}, ...] oldest first
+  return data.rows;
 }
 
 // ============ SIMULATION ============
-// Buy $1 of (adjusted close) every trading day. Adjusted close already accounts for
-// reinvested dividends and splits, so portfolio value = sum of shares * adjusted close
-// on each day, which simplifies beautifully.
+// Buy $1 of (adjusted close) every trading day. Adjusted close already
+// accounts for reinvested dividends and splits, so portfolio value = sum
+// of shares * adjusted close on each day, which simplifies beautifully.
 //
-// Method: each day d, we buy 1/adj_d shares. Adj close already reflects total return,
-// so if we own N total "share-equivalents" with average reinvested basis, the value
-// at any later date = (cumulative shares_bought_at_each_day * adj_today / adj_thatday)
-// We track two arrays for the chart: invested[i] (just $1 * i) and value[i].
+// Method: each day d, we buy 1/adj_d shares. Adj close already reflects
+// total return, so if we own N total "share-equivalents," the value at
+// any later date j = rows[j].adj * sum_{k=0..j}(1/rows[k].adj) -- so we
+// just maintain a running cumulative sum of (1/adj) day by day.
+//
+// Used identically for ticker 1 and (when comparing) ticker 2 -- this
+// function has no idea whether it's being called once or twice per
+// backtest, which is exactly why compare mode didn't need any changes
+// here at all.
 function simulate(rows) {
-  // For each day i: buy 1 / rows[i].adj "units" of return-shares
-  // After day i: portfolio value at day j (j >= i) =
-  //   sum over k=0..j of (1 / rows[k].adj) * rows[j].adj
-  //   = rows[j].adj * sum_{k=0..j} (1 / rows[k].adj)
-  // So we can maintain a running cumulative sum of (1/adj).
   let runningInvUnits = 0;
   const points = [];
   for (let i = 0; i < rows.length; i++) {
@@ -249,7 +531,25 @@ function simulate(rows) {
   return points;
 }
 
-// Sample down points so the chart isn't trying to render 10,000 days
+// NEW in v3: the lump-sum overlay line's value at every point in time,
+// not just its final CAGR (which already existed before v3). This is
+// what makes lumpValue(t) = totalInvestedFinal * (price_t / price_first)
+// -- a constant multiplied by the stock's own price ratio, which is
+// exactly why this line visually traces the stock's raw price chart
+// shape (confirmed with an illustrative sketch before building this).
+// Returns an array the same length and order as `rows`, so it lines up
+// index-for-index with whatever simulate(rows) produces.
+function lumpSumSeries(rows, totalInvestedFinal) {
+  const firstPrice = rows[0].adj;
+  return rows.map(r => totalInvestedFinal * (r.adj / firstPrice));
+}
+
+// Sample down points so the chart isn't trying to render 10,000 days.
+// Called once for ticker 1 and, when comparing, once for ticker 2 --
+// since both tickers' row arrays are guaranteed to be the same length
+// after the date-intersection step in run() (see below), sampling them
+// with the same `target` produces perfectly parallel indices, so the two
+// lines stay aligned on the same x-axis points.
 function sampleDown(points, target = 600) {
   if (points.length <= target) return points;
   const step = points.length / target;
@@ -263,17 +563,28 @@ function sampleDown(points, target = 600) {
 
 // ============ XIRR (money-weighted annualized return) ============
 // "Annualized" for a recurring-contribution strategy is NOT
-// (finalValue/totalInvested)^(1/years)-1 — that formula treats the whole
+// (finalValue/totalInvested)^(1/years)-1 -- that formula treats the whole
 // pile of invested cash as if it were one lump sum dropped in on day one,
-// which understates the real return since most dollars went in much later
-// and had far less time to compound. The financially correct method is
-// the money-weighted rate of return — the same thing Excel/Sheets' XIRR
-// computes, and what Fidelity/Vanguard show you as "Personal Rate of
-// Return": solve for the single annual rate r that makes the NPV of every
-// dated cash flow (each day's $1 contribution, plus the final payout) equal
-// zero.
+// which understates the real return since most dollars went in much
+// later and had far less time to compound. The financially correct
+// method is the money-weighted rate of return -- the same thing
+// Excel/Sheets' XIRR computes, and what Fidelity/Vanguard show you as
+// "Personal Rate of Return": solve for the single annual rate r that
+// makes the NPV of every dated cash flow (each day's $1 contribution,
+// plus the final payout) equal zero.
+//
+// Verified three separate ways during development: against scipy's
+// brentq solver on real VOO data (both landed on 14.91%), against a
+// synthetic stress-test case this exact implementation's bisection
+// fallback solved that a Newton-only version failed on (returned null),
+// and against the stock's own lump-sum CAGR for cases where the two
+// should roughly agree (steady growth) and visibly diverge for cases
+// where they shouldn't (lopsided/front-loaded growth).
+//
+// Unchanged from before v3 -- reused as-is for both ticker 1 and (when
+// comparing) ticker 2, called once per ticker in run().
 function xirr(cashflows, dates) {
-  const msPerYear = 365.25 * 24 * 3600 * 1000;
+  const msPerYear = DAYS_PER_YEAR * 24 * 3600 * 1000;
   const t0 = dates[0].getTime();
   const t = dates.map(d => (d.getTime() - t0) / msPerYear);
 
@@ -291,7 +602,7 @@ function xirr(cashflows, dates) {
     return sum;
   }
 
-  // Newton's method first — fast and precise when it converges.
+  // Newton's method first -- fast and precise when it converges.
   let r = 0.1;
   for (let iter = 0; iter < 100; iter++) {
     const f = npv(r);
@@ -299,12 +610,14 @@ function xirr(cashflows, dates) {
     const fp = npvDeriv(r);
     if (fp === 0) break;
     const next = r - f / fp;
-    if (!isFinite(next) || next <= -1) break;
+    if (!isFinite(next) || next <= -1) break; // bail before Math.pow(negative, fractional) starts returning NaN
     r = next;
   }
 
   // Fallback: bisection over a generous range (-99% to +1000% annual).
-  // Robust even when Newton's method misbehaves on tricky cash flow shapes.
+  // Robust even when Newton's method misbehaves on tricky cash flow
+  // shapes -- this is the exact safety net a stress test showed a
+  // Newton-only implementation lacks.
   let lo = -0.99, hi = 10;
   let fLo = npv(lo), fHi = npv(hi);
   if (fLo * fHi > 0) return NaN; // no sign change in range -> can't solve
@@ -319,53 +632,130 @@ function xirr(cashflows, dates) {
 }
 
 // ============ CHART ============
-function drawChart(points) {
+// Rewritten in v3 to handle a variable number of lines instead of always
+// exactly two:
+//   - Always: "Total invested" (black) + ticker 1's portfolio value
+//   - When comparing: + ticker 2's portfolio value, NO lump-sum line
+//   - When not comparing: + the lump-sum overlay (always present in the
+//     dataset array, just possibly hidden -- see the big comment further
+//     down on why it's never omitted outright)
+//
+// points2 is null when not comparing -- that single null check is what
+// switches every "comparing" branch below.
+function drawChart(points1, points2, overlayChecked) {
   const ctx = $("chart").getContext("2d");
   if (chart) chart.destroy();
 
-  const sampled = sampleDown(points);
-  const labels = sampled.map(p => p.date.slice(0, 4)); // year only for ticks
-  const invData = sampled.map(p => p.invested);
-  const valData = sampled.map(p => p.value);
+  const comparing = !!points2;
+
+  const sampled1 = sampleDown(points1);
+  // points2 covers the exact same aligned, intersected date range as
+  // points1 (guaranteed in run() before this function is ever called),
+  // so calling the same deterministic sampleDown() on it produces
+  // perfectly parallel indices -- point sampled2[i] is the same calendar
+  // day as sampled1[i].
+  const sampled2 = comparing ? sampleDown(points2) : null;
+
+  // Full "YYYY-MM-DD" strings now, not just the year -- this is what the
+  // hover tooltip's new date title (below) actually reads from. The
+  // x-axis itself still only *displays* the year; see the tick callback
+  // further down, which derives the year from this same full string.
+  const labels = sampled1.map(p => p.date);
+
+  const invData = sampled1.map(p => p.invested);
+  const val1Data = sampled1.map(p => p.value);
+  const val2Data = comparing ? sampled2.map(p => p.value) : null;
+
+  const datasets = [
+    {
+      label: "Total invested",
+      data: invData,
+      borderColor: "#1A1A1A",
+      backgroundColor: "rgba(26,26,26,0)",
+      borderWidth: 1.5,
+      pointRadius: 0,
+      tension: 0.1,
+    },
+    {
+      // Color is the one thing that changes based on mode: rust in
+      // single-ticker mode (unchanged from before v3), teal when
+      // comparing. Rust is retired entirely the moment a second ticker
+      // shows up -- see the color system note at the top of <style>.
+      label: comparing ? "Ticker 1" : "Portfolio value",
+      data: val1Data,
+      borderColor: comparing ? "#0E8074" : "#B85C38",
+      backgroundColor: comparing ? "rgba(14,128,116,0.06)" : "rgba(184,92,56,0.06)",
+      borderWidth: 2,
+      pointRadius: 0,
+      tension: 0.1,
+      fill: true,
+    }
+  ];
+
+  if (comparing) {
+    datasets.push({
+      label: "Ticker 2",
+      data: val2Data,
+      borderColor: "#A23E87",
+      backgroundColor: "rgba(162,62,135,0.06)",
+      borderWidth: 2,
+      pointRadius: 0,
+      tension: 0.1,
+      fill: true,
+    });
+    // No lump-sum line at all when comparing -- a hypothetical 4th line
+    // on top of two already-real tickers would be clutter, and "lump sum
+    // vs which ticker?" doesn't have one clean answer anyway. The
+    // lump-sum CAGR *stat* still appears in each ticker's own block
+    // regardless (see renderStatBlock) -- only the chart line is
+    // suppressed.
+    lumpDatasetIndex = -1;
+  } else {
+    // Single-ticker mode: the lump-sum dataset is ALWAYS added, even if
+    // its checkbox is currently unchecked -- it just starts with
+    // `hidden: true`. This is deliberate, not an oversight: Chart.js's
+    // setDatasetVisibility() + update() animates a dataset fading in or
+    // out smoothly (the same built-in mechanism that powers clicking a
+    // legend entry on/off), but that only works on a dataset that
+    // already exists on the chart. If this were only added at the
+    // moment the checkbox got checked, there'd be nothing to animate --
+    // the chart would just pop a new line into existence instantly.
+    // Computing the series costs almost nothing either way, so there's
+    // no real downside to always including it.
+    datasets.push({
+      label: "Lump sum (hypothetical)",
+      data: sampled1.map(p => p.lumpValue), // attached onto each point in run(), see lumpSumSeries()
+      borderColor: "#B8923D",
+      borderDash: [6, 4], // dashed -- visually marks this line as hypothetical, not an actual price history like the other two
+      borderWidth: 2,
+      pointRadius: 0,
+      tension: 0.1,
+      fill: false,
+      hidden: !overlayChecked,
+      isLumpSum: true, // custom marker property -- Chart.js ignores fields it doesn't recognize, this is purely so other code can find this dataset without hardcoding "it's always index 2"
+    });
+    lumpDatasetIndex = datasets.length - 1;
+  }
 
   chart = new Chart(ctx, {
     type: "line",
-    data: {
-      labels,
-      datasets: [
-        {
-          label: "Total invested",
-          data: invData,
-          borderColor: "#1A1A1A",
-          backgroundColor: "rgba(26,26,26,0)",
-          borderWidth: 1.5,
-          pointRadius: 0,
-          tension: 0.1,
-        },
-        {
-          label: "Portfolio value",
-          data: valData,
-          borderColor: "#B85C38",
-          backgroundColor: "rgba(184,92,56,0.06)",
-          borderWidth: 2,
-          pointRadius: 0,
-          tension: 0.1,
-          fill: true,
-        }
-      ]
-    },
+    data: { labels, datasets },
     options: {
       responsive: true,
       maintainAspectRatio: false,
       interaction: { mode: "index", intersect: false },
       plugins: {
-        legend: { display: false },
+        legend: { display: false }, // we build our own legend above the chart in the page's own typography instead of using Chart.js's built-in one
         tooltip: {
           backgroundColor: "#1A1A1A",
           padding: 12,
           titleFont: { family: "JetBrains Mono", size: 11, weight: "500" },
           bodyFont: { family: "Inter", size: 13 },
           callbacks: {
+            // NEW in v3: a title line showing the exact date being
+            // hovered, formatted like "Jan 3, 2021" -- before this, the
+            // tooltip only ever showed dollar values, no date at all.
+            title: (items) => formatDateLabel(items[0].label),
             label: (c) => `${c.dataset.label}: ${fmtUSD(c.parsed.y)}`
           }
         }
@@ -378,10 +768,15 @@ function drawChart(points) {
             font: { family: "JetBrains Mono", size: 10 },
             maxTicksLimit: 10,
             callback: function(val, i, ticks) {
-              // show year, skip duplicates
-              const lab = this.getLabelForValue(val);
+              // The visible axis still only ever shows a YEAR, deduped
+              // so it doesn't repeat at every tick -- exactly like
+              // before v3. The one change: labels are now full dates
+              // instead of bare years, so this compares just the first
+              // 4 characters (the year) rather than the whole label,
+              // which would now always differ from one tick to the next.
+              const lab = this.getLabelForValue(val).slice(0, 4);
               if (i === 0) return lab;
-              const prev = this.getLabelForValue(ticks[i-1].value);
+              const prev = this.getLabelForValue(ticks[i-1].value).slice(0, 4);
               return lab !== prev ? lab : "";
             }
           }
@@ -400,78 +795,296 @@ function drawChart(points) {
   });
 }
 
+// ============ STAT BLOCK RENDERING ============
+// NEW in v3: ONE rendering function fills in either ticker's block,
+// rather than separate single-mode and compare-mode code paths. Called
+// once for ticker 1 always, and a second time for ticker 2 only when
+// comparing -- see run() below.
+function renderStatBlock(suffix, years, gain, mult, ann, lumpCAGR, showLump) {
+  $(`sYears${suffix}`).textContent = years.toFixed(1);
+
+  // Total Gain coloring -- NEW in v3. Before this, gain was unconditionally
+  // styled rust regardless of its actual sign, meaning a real loss would
+  // have displayed in the same "everything's great" color as a real
+  // gain. Now it's green when positive, red when negative -- applied in
+  // BOTH single-ticker mode and compare mode, per explicit confirmation.
+  const gainEl = $(`sGain${suffix}`);
+  gainEl.textContent = fmtUSD(gain);
+  gainEl.classList.toggle("gain-pos", gain >= 0);
+  gainEl.classList.toggle("gain-neg", gain < 0);
+
+  $(`sMult${suffix}`).textContent = mult.toFixed(1) + "×";
+  $(`sAnn${suffix}`).textContent = isFinite(ann) ? ann.toFixed(1) + "%" : "n/a";
+
+  $(`sLump${suffix}`).textContent = isFinite(lumpCAGR) ? lumpCAGR.toFixed(1) + "%" : "n/a";
+  $(`lumpTile${suffix}`).classList.toggle("hidden", !showLump);
+}
+
+// ============ CHECKBOX CASCADE LOGIC ============
+// Three toggles interact with each other:
+//   showLump (parent)  -> gates whether the lump-sum CAGR stat tiles show,
+//                          and whether "Overlay on chart" is usable at all
+//   overlayLump (child) -> only matters if showLump is checked AND we are
+//                          NOT comparing two tickers
+//   compareToggle        -> reveals the second ticker field, and also
+//                          forces "Overlay on chart" off (a single
+//                          hypothetical line stops making sense once two
+//                          real tickers are already on the chart)
+//
+// updateLumpVisibility() is the single function that re-derives all of
+// this any time ANY of the three checkboxes changes, rather than having
+// three separate handlers each trying to keep the others in sync.
+function updateLumpVisibility() {
+  const show = $("showLump").checked;
+  const comparing = $("compareToggle").checked;
+
+  $("lumpCaption").classList.toggle("hidden", !show);
+  $("lumpTile1").classList.toggle("hidden", !show);
+  $("lumpTile2").classList.toggle("hidden", !show);
+
+  const overlayUsable = show && !comparing;
+  $("overlayLump").disabled = !overlayUsable;
+  $("overlayRow").classList.toggle("disabled", !overlayUsable);
+  // Unchecking the parent (or turning compare mode on) force-unchecks the
+  // child too, rather than leaving it checked-but-disabled. The line
+  // shouldn't keep showing while the box that controls it sits there
+  // grayed out but still ticked.
+  if (!overlayUsable) $("overlayLump").checked = false;
+
+  updateOverlayVisibility();
+}
+
+// Toggles the lump-sum dataset's visibility on an ALREADY-RENDERED chart
+// using Chart.js's own setDatasetVisibility() + update() -- the same
+// built-in mechanism Chart.js uses when you click a legend entry to fade
+// a line in or out. That's what makes the transition smooth "for free,"
+// with no hand-rolled CSS transitions or timers needed.
+function updateOverlayVisibility() {
+  if (!chart || lumpDatasetIndex < 0) return;
+  chart.setDatasetVisibility(lumpDatasetIndex, $("overlayLump").checked);
+  chart.update();
+}
+
+$("showLump").addEventListener("change", updateLumpVisibility);
+$("overlayLump").addEventListener("change", updateOverlayVisibility);
+$("compareToggle").addEventListener("change", () => {
+  $("tk2Field").classList.toggle("hidden", !$("compareToggle").checked);
+  updateLumpVisibility(); // re-checks whether "Overlay on chart" should still be usable
+});
+
 // ============ MAIN ============
 async function run() {
-  const ticker = $("tk").value.trim().toUpperCase();
-  const startYear = parseInt($("yr").value, 10);
-  const thisYear = new Date().getFullYear();
-  if (!ticker) return setStatus("Type a ticker first.", true);
-  if (!startYear || startYear < 1900 || startYear > thisYear) return setStatus(`Pick a year between 1900 and ${thisYear}.`, true);
+  const ticker1 = $("tk").value.trim().toUpperCase();
+  const comparing = $("compareToggle").checked;
+  const ticker2 = comparing ? $("tk2").value.trim().toUpperCase() : "";
+  // NEW in v3: a real date instead of a bare year. The value is already
+  // "YYYY-MM-DD" straight from the <input type="date">, so there's no
+  // more gluing "-01-01" onto a number the way the old year field needed.
+  const startDate = $("dt").value;
+  const todayStr = new Date().toISOString().slice(0, 10);
+
+  if (!ticker1) return setStatus("Type a ticker first.", true);
+  if (comparing && !ticker2) return setStatus('Type a second ticker, or uncheck "Compare a second ticker."', true);
+  // Reject anything that doesn't look like a real ticker BEFORE it's
+  // used anywhere else below -- this is layer #1 of the XSS fix above.
+  // Deliberately doesn't echo the bad value back in the message (no
+  // need to, and it removes any temptation to interpolate untrusted
+  // text into this string at all).
+  if (!TICKER_PATTERN.test(ticker1)) return setStatus("That doesn't look like a valid ticker symbol.", true);
+  if (comparing && !TICKER_PATTERN.test(ticker2)) return setStatus("The second ticker doesn't look valid.", true);
+  if (!startDate) return setStatus("Pick a start date.", true);
+  // 1962-01-02 is the verified earliest real date this data source has
+  // for any ticker (see the comment on the date input's min attribute in
+  // the HTML above) -- multiple unrelated companies all hit this exact
+  // same wall, and Jan 1, 1962 itself is impossible since New Year's Day
+  // is always a market holiday.
+  if (startDate < "1962-01-02" || startDate > todayStr) {
+    return setStatus(`Pick a date between 1962-01-02 and ${todayStr}.`, true);
+  }
 
   const btn = $("run");
   btn.disabled = true;
   btn.textContent = "Loading…";
-  setStatus(`<span class="blink"></span>Pulling ${ticker}'s full price history…`);
+  setStatus(`<span class="blink"></span>Pulling ${escapeHtml(comparing ? ticker1 + " and " + ticker2 + "'s" : ticker1 + "'s")} full price history…`);
   $("results").classList.remove("shown");
 
   try {
-    const allRows = await fetchPrices(ticker);
+    // Fetch both tickers in parallel when comparing -- comparing two
+    // tickers shouldn't take twice as long to load as one. Promise.
+    // allSettled (not Promise.all) so that if exactly one ticker is
+    // invalid, the error names THAT ticker specifically instead of
+    // failing generically.
+    const settled = comparing
+      ? await Promise.allSettled([fetchPrices(ticker1), fetchPrices(ticker2)])
+      : await Promise.allSettled([fetchPrices(ticker1)]);
 
-    const requestedStart = `${startYear}-01-01`;
-    const earliestAvail = allRows[0].date;
-    let rows, clipNote = "";
-    if (earliestAvail > requestedStart) {
-      rows = allRows;
-      clipNote = ` — data for ${ticker} only goes back to ${earliestAvail}, showing full history from there`;
-    } else {
-      rows = allRows.filter(r => r.date >= requestedStart);
+    const failures = [];
+    if (settled[0].status === "rejected") failures.push(`${ticker1}: ${settled[0].reason.message}`);
+    if (comparing && settled[1].status === "rejected") failures.push(`${ticker2}: ${settled[1].reason.message}`);
+    if (failures.length) throw new Error(failures.join(" — "));
+
+    const allRows1 = settled[0].value;
+    const allRows2 = comparing ? settled[1].value : null;
+
+    // The actual common start date is the LATEST of: what was requested,
+    // ticker 1's earliest available date, and (when comparing) ticker
+    // 2's earliest available date. Plain string comparison works
+    // correctly here because every date is "YYYY-MM-DD", which sorts
+    // identically to chronological order.
+    let alignedStart = startDate;
+    if (allRows1[0].date > alignedStart) alignedStart = allRows1[0].date;
+    if (comparing && allRows2[0].date > alignedStart) alignedStart = allRows2[0].date;
+
+    let rows1 = allRows1.filter(r => r.date >= alignedStart);
+    let rows2 = comparing ? allRows2.filter(r => r.date >= alignedStart) : null;
+
+    if (comparing) {
+      // Two different tickers can, in rare cases, have slightly
+      // different sets of trading days even on the same exchange (a
+      // data gap unique to just one of them). Rather than assume they
+      // line up and risk silently misaligning dates by array index,
+      // explicitly intersect both date sets so index i in rows1 and
+      // rows2 is guaranteed to refer to the exact same calendar day --
+      // this is what lets drawChart() safely zip them together later.
+      const dates2 = new Set(rows2.map(r => r.date));
+      rows1 = rows1.filter(r => dates2.has(r.date));
+      const dates1 = new Set(rows1.map(r => r.date));
+      rows2 = rows2.filter(r => dates1.has(r.date));
     }
-    if (rows.length < 50) throw new Error(`Not enough price data for "${ticker}" since ${startYear}.`);
 
-    setStatus(`<span class="blink"></span>Got ${rows.length.toLocaleString()} trading days. Simulating…`);
+    if (rows1.length < MIN_TRADING_DAYS) throw new Error(`Not enough price data for "${ticker1}" since ${startDate}.`);
+    if (comparing && rows2.length < MIN_TRADING_DAYS) throw new Error(`Not enough price data for "${ticker2}" since ${startDate}.`);
 
-    const points = simulate(rows);
-    const last = points[points.length - 1];
-    const first = points[0];
+    let clipNote = "";
+    if (alignedStart > startDate) {
+      const who = comparing ? `${ticker1}/${ticker2}` : ticker1;
+      clipNote = ` — data for ${who} only goes back to ${alignedStart}, showing full history from there`;
+    }
 
-    drawChart(points);
+    setStatus(`<span class="blink"></span>Got ${rows1.length.toLocaleString()} trading days. Simulating…`);
 
-    const totalInvested = last.invested;
-    const finalValue = last.value;
-    const gain = finalValue - totalInvested;
-    const mult = finalValue / totalInvested;
-    const years = (new Date(last.date) - new Date(first.date)) / (365.25 * 24 * 3600 * 1000);
+    const points1 = simulate(rows1);
+    const points2 = comparing ? simulate(rows2) : null;
+    const last1 = points1[points1.length - 1];
+    const first1 = points1[0];
+    // Both tickers share this same value once aligned -- computed once,
+    // reused for both stat blocks below.
+    const years = (new Date(last1.date) - new Date(first1.date)) / (DAYS_PER_YEAR * 24 * 3600 * 1000);
 
-    // Build the real dated cash flow stream for XIRR: -$1 contributed each
-    // trading day, plus the whole portfolio realized (added back) on the
-    // last day. This is what actually determines a DCA strategy's return —
-    // not treating totalInvested as a single lump sum invested on day one.
-    const cfDates = points.map(p => new Date(p.date));
-    const cashflows = points.map(() => -1);
-    cashflows[cashflows.length - 1] += finalValue;
-    const annRate = xirr(cashflows, cfDates);
-    const ann = isFinite(annRate) ? annRate * 100 : NaN;
+    // ---- ticker 1's numbers ----
+    const totalInvested1 = last1.invested;
+    const finalValue1 = last1.value;
+    const gain1 = finalValue1 - totalInvested1;
+    const mult1 = finalValue1 / totalInvested1;
 
-    // Lump-sum CAGR: what the same total dollars would've returned invested
-    // all at once on day one instead of spread out $1/day. Pure price ratio,
-    // no solver needed — it's just the stock's own buy-and-hold return.
-    const lumpCAGR = (Math.pow(rows[rows.length - 1].adj / rows[0].adj, 1 / years) - 1) * 100;
-    $("sLump").textContent = lumpCAGR.toFixed(1) + "%";
+    // Build the real dated cash flow stream for XIRR: -$1 contributed
+    // each trading day, plus the whole portfolio realized (added back)
+    // on the last day. This is what actually determines a DCA
+    // strategy's return -- not treating totalInvested as a single lump
+    // sum invested on day one.
+    const cfDates1 = points1.map(p => new Date(p.date));
+    const cashflows1 = points1.map(() => -1);
+    cashflows1[cashflows1.length - 1] += finalValue1;
+    const annRate1 = xirr(cashflows1, cfDates1);
+    const ann1 = isFinite(annRate1) ? annRate1 * 100 : NaN;
+
+    // Lump-sum CAGR: what the same total dollars would've returned
+    // invested all at once on day one instead of spread out $1/day. Pure
+    // price ratio, no solver needed -- it's just the stock's own
+    // buy-and-hold return.
+    const lumpCAGR1 = (Math.pow(rows1[rows1.length - 1].adj / rows1[0].adj, 1 / years) - 1) * 100;
+
+    // NEW in v3: also compute the lump-sum value at EVERY point along
+    // the way (not just the final CAGR), attached directly onto each
+    // point object so drawChart()'s sampleDown() keeps it perfectly
+    // aligned with the rest of that point's data. Only relevant in
+    // single-ticker mode -- the overlay line never appears in compare
+    // mode at all.
+    if (!comparing) {
+      const lumpSeries = lumpSumSeries(rows1, totalInvested1);
+      points1.forEach((p, i) => { p.lumpValue = lumpSeries[i]; });
+    }
+
+    // ---- ticker 2's numbers (only when comparing) ----
+    let totalInvested2, finalValue2, gain2, mult2, ann2, lumpCAGR2;
+    if (comparing) {
+      const last2 = points2[points2.length - 1];
+      totalInvested2 = last2.invested;
+      finalValue2 = last2.value;
+      gain2 = finalValue2 - totalInvested2;
+      mult2 = finalValue2 / totalInvested2;
+
+      const cfDates2 = points2.map(p => new Date(p.date));
+      const cashflows2 = points2.map(() => -1);
+      cashflows2[cashflows2.length - 1] += finalValue2;
+      const annRate2 = xirr(cashflows2, cfDates2);
+      ann2 = isFinite(annRate2) ? annRate2 * 100 : NaN;
+
+      lumpCAGR2 = (Math.pow(rows2[rows2.length - 1].adj / rows2[0].adj, 1 / years) - 1) * 100;
+    }
+
+    drawChart(points1, points2, $("overlayLump").checked);
+
+    const showLump = $("showLump").checked;
+
+    // ---- stat blocks ----
+    renderStatBlock("1", years, gain1, mult1, ann1, lumpCAGR1, showLump);
+    $("tname1").textContent = ticker1;
+    setColorClass($("swatch1"), "bar", "ticker1");
+    // Block 1's header (swatch + ticker name) only matters once there's
+    // a second block to disambiguate FROM -- single-ticker mode hides it,
+    // exactly like before v3 had no header here at all.
+    $("thead1").classList.toggle("hidden", !comparing);
+
+    if (comparing) {
+      renderStatBlock("2", years, gain2, mult2, ann2, lumpCAGR2, showLump);
+      $("tname2").textContent = ticker2;
+      setColorClass($("swatch2"), "bar", "ticker2");
+      $("tblock2").classList.remove("hidden");
+    } else {
+      $("tblock2").classList.add("hidden");
+    }
 
     $("shortCaveat").classList.toggle("hidden", years >= 2);
 
-    $("legInv").textContent = fmtUSD(totalInvested);
-    $("legVal").textContent = fmtUSD(finalValue);
-    $("sYears").textContent = years.toFixed(1);
-    $("sGain").textContent = fmtUSD(gain);
-    $("sMult").textContent = mult.toFixed(1) + "×";
-    $("sAnn").textContent = isFinite(ann) ? ann.toFixed(1) + "%" : "n/a";
+    // ---- legend above the chart ----
+    // "Total invested" is one shared number once both tickers are
+    // aligned to the same dates, so either ticker's totalInvested works
+    // here -- they're identical by construction.
+    $("legInv").textContent = fmtUSD(totalInvested1);
+
+    setColorClass($("legBar1"), "bar", comparing ? "ticker1" : "rust");
+    $("legVal1").textContent = fmtUSD(finalValue1);
+    setColorClass($("legVal1"), "text", comparing ? "ticker1" : "rust");
+    $("legLabel1").innerHTML = (comparing ? `${escapeHtml(ticker1)} · ` : "") +
+      `Portfolio value <span style="color:var(--muted);font-family:'JetBrains Mono',monospace;font-size:9px;">· dividends reinvested</span>`;
+
+    $("legValRow2").classList.toggle("hidden", !comparing);
+    if (comparing) {
+      setColorClass($("legBar2"), "bar", "ticker2");
+      $("legVal2").textContent = fmtUSD(finalValue2);
+      setColorClass($("legVal2"), "text", "ticker2");
+      $("legLabel2").innerHTML = `${escapeHtml(ticker2)} · Portfolio value <span style="color:var(--muted);font-family:'JetBrains Mono',monospace;font-size:9px;">· dividends reinvested</span>`;
+    }
 
     $("results").classList.add("shown");
-    history.replaceState(null, "", `?t=${encodeURIComponent(ticker)}&y=${startYear}`);
-    setStatus(`${ticker} · ${first.date} → ${last.date} · ${rows.length.toLocaleString()} trading days simulated.${clipNote}`);
+
+    // ---- shareable URL ----
+    // Always writes the NEW format going forward (?d= for the full date,
+    // optionally &t2= when comparing). The OLD ?y= format is still read
+    // on page load for backward compatibility with links shared before
+    // v3 -- see the load listener below -- but nothing ever writes ?y=
+    // again once a date picker is the only way to set a start date.
+    // history.replaceState (not pushState) so running several different
+    // backtests in a row doesn't pile up separate back-button stops.
+    let shareUrl = `?t=${encodeURIComponent(ticker1)}&d=${startDate}`;
+    if (comparing) shareUrl += `&t2=${encodeURIComponent(ticker2)}`;
+    history.replaceState(null, "", shareUrl);
+
+    const who = comparing ? `${ticker1} vs ${ticker2}` : ticker1;
+    setStatus(`${escapeHtml(who)} · ${alignedStart} → ${last1.date} · ${rows1.length.toLocaleString()} trading days simulated.${escapeHtml(clipNote)}`);
   } catch (e) {
-    setStatus(`Error: ${e.message}`, true);
+    setStatus(`Error: ${escapeHtml(e.message)}`, true);
   } finally {
     btn.disabled = false;
     btn.textContent = "Run backtest";
@@ -486,31 +1099,45 @@ function setStatus(html, isErr=false) {
 
 $("run").addEventListener("click", run);
 $("tk").addEventListener("keydown", e => { if (e.key === "Enter") run(); });
-$("yr").addEventListener("keydown", e => { if (e.key === "Enter") run(); });
+$("tk2").addEventListener("keydown", e => { if (e.key === "Enter") run(); });
+$("dt").addEventListener("keydown", e => { if (e.key === "Enter") run(); });
 
-function updateLumpVisibility() {
-  const show = $("showLump").checked;
-  $("lumpStatTile").classList.toggle("hidden", !show);
-  $("lumpCaption").classList.toggle("hidden", !show);
-}
-$("showLump").addEventListener("change", updateLumpVisibility);
-
-// Keep the year field's max realistic without needing a redeploy every January,
-// and pick up ticker/year from a shared link if present.
+// Keep the date field's max realistic without needing a redeploy every
+// day, and pick up ticker/date (or a legacy ticker/year link) from a
+// shared URL if present.
 window.addEventListener("load", () => {
-  $("yr").max = new Date().getFullYear();
+  $("dt").max = new Date().toISOString().slice(0, 10);
   updateLumpVisibility();
 
   const params = new URLSearchParams(location.search);
   const t = params.get("t");
-  const y = params.get("y");
-  if (t) $("tk").value = t.toUpperCase();
-  if (y) $("yr").value = y;
+  const d = params.get("d");   // new v3 format -- a full date
+  const y = params.get("y");   // legacy v2.1-and-earlier format -- a bare year
+  const t2 = params.get("t2"); // new v3 format -- second ticker for compare mode
 
-  if (t && y) {
+  if (t) $("tk").value = t.toUpperCase();
+  if (d) {
+    $("dt").value = d;
+  } else if (y) {
+    // Old links always meant "January 1st of that year" -- reconstruct
+    // a full date the same way so a pre-v3 shared link still behaves
+    // exactly as it did when it was created.
+    $("dt").value = `${y}-01-01`;
+  }
+  if (t2) {
+    $("tk2").value = t2.toUpperCase();
+    $("compareToggle").checked = true;
+    $("tk2Field").classList.remove("hidden");
+  }
+
+  // Same rule as before v3: a partial link just pre-fills the form and
+  // waits for a manual click, it does not auto-run. Auto-run requires
+  // BOTH a ticker and a date (old-style year or new-style full date) to
+  // be present in the URL.
+  if (t && (d || y)) {
     run();
   } else {
-    setStatus("Type a ticker and a start year, then run the backtest.");
+    setStatus("Type a ticker and a start date, then run the backtest.");
   }
 });
 </script>
