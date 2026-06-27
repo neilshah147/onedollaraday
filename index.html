@@ -642,7 +642,7 @@ function xirr(cashflows, dates) {
 //
 // points2 is null when not comparing -- that single null check is what
 // switches every "comparing" branch below.
-function drawChart(points1, points2, overlayChecked) {
+function drawChart(points1, points2, overlayChecked, ticker1, ticker2) {
   const ctx = $("chart").getContext("2d");
   if (chart) chart.destroy();
 
@@ -681,7 +681,7 @@ function drawChart(points1, points2, overlayChecked) {
       // single-ticker mode (unchanged from before v3), teal when
       // comparing. Rust is retired entirely the moment a second ticker
       // shows up -- see the color system note at the top of <style>.
-      label: comparing ? "Ticker 1" : "Portfolio value",
+      label: comparing ? ticker1 : "Portfolio value",
       data: val1Data,
       borderColor: comparing ? "#0E8074" : "#B85C38",
       backgroundColor: comparing ? "rgba(14,128,116,0.06)" : "rgba(184,92,56,0.06)",
@@ -694,7 +694,7 @@ function drawChart(points1, points2, overlayChecked) {
 
   if (comparing) {
     datasets.push({
-      label: "Ticker 2",
+      label: ticker2,
       data: val2Data,
       borderColor: "#A23E87",
       backgroundColor: "rgba(162,62,135,0.06)",
@@ -1023,7 +1023,7 @@ async function run() {
       lumpCAGR2 = (Math.pow(rows2[rows2.length - 1].adj / rows2[0].adj, 1 / years) - 1) * 100;
     }
 
-    drawChart(points1, points2, $("overlayLump").checked);
+    drawChart(points1, points2, $("overlayLump").checked, ticker1, ticker2);
 
     const showLump = $("showLump").checked;
 
